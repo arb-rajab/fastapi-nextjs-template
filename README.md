@@ -64,7 +64,7 @@ Repository
    rm rename.sh
    ```
 
-2. Fill in the `LICENSE` copyright line and `SECURITY.md`.
+2. Update the `LICENSE` copyright line and `SECURITY.md`.
 3. Run the stack:
 
    ```
@@ -124,4 +124,4 @@ BACKEND_URL=http://localhost:8010 npm run dev
 
 ## License
 
-MIT. Replace the placeholder copyright holder in `LICENSE`.
+MIT. Update the copyright line in `LICENSE` for your project.
