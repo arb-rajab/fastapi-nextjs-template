@@ -1,0 +1,68 @@
+[project]
+name = "starterapp-backend"
+version = "0.1.0"
+description = "starterapp backend API (FastAPI, SQLAlchemy, Alembic)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    "redis>=5.0",
+    "pyjwt>=2.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "bandit>=1.7",
+    "pip-audit>=2.7",
+]
+# Production ASGI server; only docker/Dockerfile.prod installs it.
+prod = [
+    "gunicorn>=23.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/starterapp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+# Pin the sections so import order does not depend on the project name:
+# `alembic/` is also a local directory, which ruff would otherwise treat as
+# first-party and sort relative to the package name (breaking after a rename).
+known-first-party = ["starterapp"]
+known-third-party = ["alembic"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection pattern requires Depends(...)/Query(...) as
+# an argument default.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

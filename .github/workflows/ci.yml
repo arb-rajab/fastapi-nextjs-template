@@ -1,0 +1,188 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege for the GITHUB_TOKEN; jobs that need more declare it themselves.
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (lint, type-check, security, tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    # pytest needs a real Postgres and Redis. Migration 0002 creates the
+    # restricted app role itself, so only the admin role is provisioned here.
+    # Service images come from mirror.gcr.io (a cache of popular Docker Hub
+    # images). If a tag 404s there, use the plain Docker Hub name.
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: starterapp
+          POSTGRES_PASSWORD: starterapp
+          POSTGRES_DB: starterapp
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U starterapp -d starterapp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: mirror.gcr.io/library/redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_ADMIN_URL: postgresql+psycopg://starterapp:starterapp@localhost:5433/starterapp
+      DATABASE_URL: postgresql+psycopg://starterapp_app:starterapp_app_dev_only@localhost:5433/starterapp
+      APP_DB_ROLE: starterapp_app
+      APP_DB_PASSWORD: starterapp_app_dev_only
+      REDIS_URL: redis://localhost:6380/0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install '.[dev]'
+
+      - name: ruff
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: mypy
+        run: mypy src
+
+      - name: bandit
+        run: bandit -r src
+
+      - name: alembic upgrade head
+        run: alembic upgrade head
+
+      - name: pytest
+        run: pytest -q
+
+      - name: pip-audit
+        run: pip-audit
+
+  frontend:
+    name: Frontend (lint, type-check, build, tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: eslint
+        run: npm run lint
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: build
+        run: npm run build
+
+      - name: test
+        run: npm test
+
+      - name: npm audit
+        run: npm audit --omit=dev
+
+  gitleaks:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Gates on the OSV database across the whole frontend lockfile, including dev
+  # dependencies, which the `npm audit --omit=dev` step above skips.
+  # Exceptions live, dated, in osv-scanner.toml.
+  dependency-scan:
+    name: Dependency vulnerability scan (osv-scanner)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run osv-scanner
+        uses: google/osv-scanner-action/osv-scanner-action@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
+        with:
+          scan-args: |-
+            --config=osv-scanner.toml
+            --lockfile=frontend/package-lock.json
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      security-events: write
+    strategy:
+      matrix:
+        language: ["python", "javascript-typescript"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          languages: ${{ matrix.language }}
+
+      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # CodeQL for the GitHub Actions workflows themselves (injection via untrusted
+  # event data, over-broad token permissions, unsafe checkouts).
+  codeql-actions:
+    name: CodeQL (actions)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          languages: actions
+          build-mode: none
+
+      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          category: "/language:actions"

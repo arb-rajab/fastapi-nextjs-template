@@ -1,0 +1,93 @@
+# Production-shaped stack: the same services as docker-compose.yml, built from
+# the production Dockerfiles (gunicorn workers, Next standalone output,
+# non-root users). Host ports differ from the dev stack so both can run side by
+# side; use a distinct project name to keep volumes separate:
+#   docker compose -f docker-compose.prod.yml -p starterapp-prod up -d --build
+#
+# TLS is not terminated here. Put a reverse proxy in front for real traffic and
+# then set COOKIE_SECURE=true so the session cookie is marked Secure.
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-starterapp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-starterapp}
+      POSTGRES_DB: ${POSTGRES_DB:-starterapp}
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-starterapp} -d ${POSTGRES_DB:-starterapp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile.prod
+    image: starterapp-backend-prod:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://${APP_DB_ROLE:-starterapp_app}:${APP_DB_PASSWORD:-starterapp_app_dev_only}@postgres:5432/starterapp}
+      DATABASE_ADMIN_URL: ${DATABASE_ADMIN_URL:-postgresql+psycopg://${POSTGRES_USER:-starterapp}:${POSTGRES_PASSWORD:-starterapp}@postgres:5432/starterapp}
+      APP_DB_ROLE: ${APP_DB_ROLE:-starterapp_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-starterapp_app_dev_only}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      # The fallback is a dev-only placeholder; a real deployment MUST set this.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-starterapp-dev-only-jwt-secret-DO-NOT-USE-IN-PRODUCTION}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
+    ports:
+      - "8011:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # /ready (not /health) so the check reflects real Postgres connectivity.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: docker/Dockerfile.prod
+    image: starterapp-frontend-prod:latest
+    restart: unless-stopped
+    environment:
+      HOSTNAME: "0.0.0.0"
+      BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
+      # Leave false until TLS terminates in front of this service: a Secure
+      # cookie sent over plain HTTP is dropped by the browser.
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    ports:
+      - "3002:3000"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_prod_data:

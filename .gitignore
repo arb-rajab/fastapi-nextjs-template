@@ -1,0 +1,32 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+backend/dist/
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/*.tsbuildinfo
+
+# Claude Code local runtime state
+.claude/
+
+# IDE
+.idea
+.vscode
+
+# OS
+.DS_Store
+Thumbs.db

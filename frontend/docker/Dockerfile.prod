@@ -1,0 +1,29 @@
+# Production frontend image: Next "standalone" output (next.config.ts) in a
+# multi-stage build whose final stage carries only the traced runtime
+# dependencies and a plain server.js, running as a non-root user.
+# Build context is `frontend/`.
+
+FROM node:22-slim AS deps
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+FROM node:22-slim AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
+
+FROM node:22-slim AS runner
+# node:22-slim already ships a non-root `node` user (uid 1000).
+WORKDIR /app
+ENV NODE_ENV=production
+# Docker injects HOSTNAME=<container id>, which makes the standalone server
+# bind to a single interface and breaks loopback healthchecks. Pin it.
+ENV HOSTNAME=0.0.0.0
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+USER node
+EXPOSE 3000
+CMD ["node", "server.js"]
