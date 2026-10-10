@@ -16,3 +16,14 @@
 # What the advisory is, why it cannot be fixed now (no patched release, or a
 # breaking upgrade), and why it is not reachable in production.
 # """
+
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2026-11-09
+reason = """
+braces <= 3.0.3 (stack-exhaustion DoS). Dev/test-tooling dependency only
+(reached via eslint-config-next); never shipped in the runtime artifact. No
+patched release exists upstream as of 2026-10-10. Before the expiry date:
+check whether a fixed braces release exists; if so, update the lockfile and
+delete this entry, otherwise re-confirm and renew.
+"""
